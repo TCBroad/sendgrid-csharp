@@ -1,7 +1,8 @@
 ﻿namespace SendGrid
 {
-    using System;
+    using System.Collections.Generic;
     using System.IO;
+    using System.Linq;
     using System.Net;
     using System.Net.Http;
     using System.Threading.Tasks;
@@ -25,32 +26,52 @@
         {
             if (response.StatusCode != HttpStatusCode.OK)
             {
-                using (var reader = XmlReader.Create(stream))
+                try
                 {
-                    while (reader.Read())
+                    using (var reader = XmlReader.Create(stream))
                     {
-                        if (!reader.IsStartElement())
+                        while (reader.Read())
                         {
-                            continue;
-                        }
+                            if (!reader.IsStartElement())
+                            {
+                                continue;
+                            }
 
-                        switch (reader.Name)
-                        {
-                            case "result":
-                                continue;
-                            case "message":
-                                continue;
-                            case "errors":
-                                reader.ReadToFollowing("error");
-                                var message = reader.ReadElementContentAsString("error", reader.NamespaceURI);
-                                throw new InvalidApiRequestException(response.StatusCode, new[] { message }, response.ReasonPhrase);
-                            case "error":
-                                throw new ProtocolViolationException();
-                            default:
-                                throw new ArgumentException("Unknown element: " + reader.Name);
+                            switch (reader.Name)
+                            {
+                                case "result":
+                                    continue;
+                                case "message":
+                                    continue;
+                                case "errors":
+                                    var messages = GetErrors(reader).ToArray();
+                                    throw new InvalidApiRequestException(response.StatusCode, messages, response.ReasonPhrase);
+                                case "error":
+                                    throw new SendGridResponseException("Unexpected element: " + reader.Name, response);
+                                default:
+                                    throw new SendGridResponseException("Unknown element: " + reader.Name, response);
+                            }
                         }
                     }
                 }
+                catch (XmlException exception)
+                {
+                    throw new SendGridResponseException("Parsing error, see response", exception, response);
+                }
+            }
+        }
+
+        private static IEnumerable<string> GetErrors(XmlReader reader)
+        {
+            const string ErrorTag = "error";
+
+            if (reader.ReadToDescendant(ErrorTag))
+            {
+                do
+                {
+                    yield return reader.ReadElementContentAsString();
+                }
+                while (reader.Name == ErrorTag);
             }
         }
     }
